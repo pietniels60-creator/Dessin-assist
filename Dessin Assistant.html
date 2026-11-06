@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#c2410c">
+<title>Dessin Assistant</title>
+<style>
+:root{--bg:#f6f4ef;--fg:#1d1d1b;--card:#fff;--ac:#c2410c;--mut:#777;--bd:#ddd}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#eee;--card:#222;--mut:#999;--bd:#333;--ac:#fb923c}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{padding:14px 16px 6px;display:flex;align-items:center;justify-content:space-between}
+h1{font-size:1.15rem;margin:0}
+main{padding:8px 12px 24px;max-width:640px;margin:auto}
+#view{background:var(--card);border:1px solid var(--bd);border-radius:14px;min-height:220px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+canvas{width:100%;height:auto;display:block}
+#ph{color:var(--mut);padding:40px 20px;text-align:center;font-size:.95rem}
+.row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+button,label.btn{flex:1;min-width:110px;background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:12px;padding:12px 8px;font-size:.95rem;text-align:center;cursor:pointer}
+button.on,button.main,label.main{background:var(--ac);color:#fff;border-color:var(--ac)}
+input[type=file]{display:none}
+.panel{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:6px 14px 10px}
+.ctl{padding:8px 0}
+.ctl .t{display:flex;justify-content:space-between;font-size:.9rem}
+.ctl .t b{color:var(--ac);font-weight:600}
+input[type=range]{width:100%;accent-color:var(--ac);height:32px}
+.sw{display:flex;align-items:center;justify-content:space-between;padding:10px 0;font-size:.9rem;border-top:1px solid var(--bd)}
+.sw input{width:22px;height:22px;accent-color:var(--ac)}
+small{color:var(--mut)}
+select{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:6px;font-size:.9rem}
+#ar{position:fixed;inset:0;background:#000;z-index:9;touch-action:none;overflow:hidden;user-select:none;-webkit-user-select:none}
+#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#ov{position:absolute;left:50%;top:50%;width:85vw;height:auto;mix-blend-mode:multiply;transform-origin:center;pointer-events:none}
+#arbar{position:absolute;bottom:0;left:0;right:0;display:flex;gap:6px;padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:rgba(0,0,0,.6)}
+#arbar button{min-width:0;padding:10px 2px;font-size:.78rem}
+#arpanel{position:absolute;left:8px;right:8px;bottom:calc(66px + env(safe-area-inset-bottom));max-height:52vh;overflow:auto;border-radius:14px}
+#armsg{position:absolute;top:calc(10px + env(safe-area-inset-top));left:0;right:0;text-align:center;color:#fff;font-size:.8rem;text-shadow:0 0 4px #000;pointer-events:none}
+</style>
+</head>
+<body>
+<header><h1>✏️ Dessin Assistant</h1><small>Photo → modèle de dessin</small></header>
+<main>
+  <div id="view"><div id="ph">Chargez une photo ou prenez-en une pour obtenir un modèle de dessin réglable.</div><canvas id="out" hidden></canvas></div>
+
+  <div class="row">
+    <label class="btn main">📷 Prendre une photo<input id="cam" type="file" accept="image/*" capture="environment"></label>
+    <label class="btn">🖼️ Galerie<input id="gal" type="file" accept="image/*"></label>
+  </div>
+
+  <div class="row"><button id="arbtn" class="main">🎯 Mode caméra A/R : calquer sur la feuille</button></div>
+
+  <div class="row" id="modes">
+    <button data-m="lines" class="on">Contours</button>
+    <button data-m="gray">Gris</button>
+    <button data-m="both">Mixte</button>
+  </div>
+
+  <div class="panel" id="panel"></div>
+
+  <div class="row">
+    <button id="reset">↺ Réinitialiser</button>
+    <button id="save" class="main">⬇️ Enregistrer PNG</button>
+  </div>
+</main>
+
+<div id="ar" hidden>
+  <video id="vid" playsinline muted autoplay></video>
+  <canvas id="ov"></canvas>
+  <div id="armsg">1 doigt : déplacer · 2 doigts : zoom et rotation</div>
+  <div id="arpanel" hidden></div>
+  <div id="arbar">
+    <button id="arlock">🔓 Libre</button>
+    <button id="arcenter">⌖ Centrer</button>
+    <button id="arset">⚙️ Réglages</button>
+    <button id="arclose">✕ Fermer</button>
+  </div>
+</div>
+<script>
+const DEF={lum:0,con:100,blur:1,sens:60,ep:2,op:35,grid:0,inv:false,ov:70,col:1};
+const COL=[[0,0,0],[220,38,38],[37,99,235]];
+const CTL=[
+ ['ov','Opacité du calque A/R',10,100,1,'%'],
+ ['ep','Épaisseur du trait',1,8,1,''],
+ ['sens','Sensibilité des contours',5,100,1,'%'],
+ ['lum','Luminosité',-100,100,1,''],
+ ['con','Contraste',40,250,1,'%'],
+ ['blur','Lissage (moins de détails)',0,6,1,''],
+ ['op','Photo en fond (mode Mixte)',0,100,1,'%'],
+ ['grid','Grille de repère (0 = aucune)',0,12,1,' cases']
+];
+let S={...DEF},mode='lines',src=null;
+const out=document.getElementById('out'),ph=document.getElementById('ph'),panel=document.getElementById('panel');
+
+// Interface des réglages
+CTL.forEach(([k,l,mn,mx,st,u])=>{
+  const d=document.createElement('div');d.className='ctl';
+  d.innerHTML=`<div class="t"><span>${l}</span><b id="v_${k}"></b></div><input type="range" id="r_${k}" min="${mn}" max="${mx}" step="${st}">`;
+  panel.appendChild(d);
+  const r=d.querySelector('input');
+  r.oninput=()=>{S[k]=+r.value;lab(k);if(k=='ov')applyOv();ask()};
+});
+const sw=document.createElement('label');sw.className='sw';
+sw.innerHTML='<span>Inverser (blanc sur noir)</span><input type="checkbox" id="inv">';
+panel.appendChild(sw);
+document.getElementById('inv').onchange=e=>{S.inv=e.target.checked;ask()};
+const cs=document.createElement('label');cs.className='sw';
+cs.innerHTML='<span>Couleur du trait</span><select id="col"><option value="0">Noir</option><option value="1">Rouge</option><option value="2">Bleu</option></select>';
+panel.appendChild(cs);
+document.getElementById('col').onchange=e=>{S.col=+e.target.value;ask()};
+function lab(k){const c=CTL.find(x=>x[0]==k);document.getElementById('v_'+k).textContent=S[k]+c[5]}
+function sync(){CTL.forEach(c=>{document.getElementById('r_'+c[0]).value=S[c[0]];lab(c[0])});document.getElementById('inv').checked=S.inv;document.getElementById('col').value=S.col;applyOv()}
+sync();
+
+document.querySelectorAll('#modes button').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.m;document.querySelectorAll('#modes button').forEach(x=>x.classList.toggle('on',x==b));ask()});
+document.getElementById('reset').onclick=()=>{S={...DEF};sync();ask()};
+
+// Chargement image
+function load(f){
+  if(!f)return;
+  const img=new Image();
+  img.onload=()=>{
+    const M=900,k=Math.min(1,M/Math.max(img.width,img.height));
+    const c=document.createElement('canvas');c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    const id=c.getContext('2d').getImageData(0,0,c.width,c.height);
+    const g=new Float32Array(c.width*c.height);
+    for(let i=0,j=0;i<id.data.length;i+=4,j++)g[j]=.299*id.data[i]+.587*id.data[i+1]+.114*id.data[i+2];
+    src={w:c.width,h:c.height,g};
+    out.width=src.w;out.height=src.h;out.hidden=false;ph.hidden=true;
+    URL.revokeObjectURL(img.src);render();
+  };
+  img.src=URL.createObjectURL(f);
+}
+cam.onchange=e=>load(e.target.files[0]);
+gal.onchange=e=>load(e.target.files[0]);
+
+let pend=false;
+function ask(){if(!src||pend)return;pend=true;requestAnimationFrame(()=>{pend=false;render()})}
+
+function boxBlur(a,w,h,r){
+  if(r<1)return a;
+  const t=new Float32Array(a.length),o=new Float32Array(a.length),n=2*r+1;
+  for(let y=0;y<h;y++){let s=0;const row=y*w;
+    for(let x=-r;x<=r;x++)s+=a[row+Math.min(w-1,Math.max(0,x))];
+    for(let x=0;x<w;x++){t[row+x]=s/n;s+=a[row+Math.min(w-1,x+r+1)]-a[row+Math.max(0,x-r)]}}
+  for(let x=0;x<w;x++){let s=0;
+    for(let y=-r;y<=r;y++)s+=t[Math.min(h-1,Math.max(0,y))*w+x];
+    for(let y=0;y<h;y++){o[y*w+x]=s/n;s+=t[Math.min(h-1,y+r+1)*w+x]-t[Math.max(0,y-r)*w+x]}}
+  return o;
+}
+function dilate(e,w,h,r){
+  if(r<1)return e;
+  const t=new Uint8Array(e.length),o=new Uint8Array(e.length);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){let m=0;
+    for(let k=-r;k<=r&&!m;k++){const xx=x+k;if(xx>=0&&xx<w&&e[y*w+xx])m=1}t[y*w+x]=m}
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){let m=0;
+    for(let k=-r;k<=r&&!m;k++){const yy=y+k;if(yy>=0&&yy<h&&t[yy*w+x])m=1}o[y*w+x]=m}
+  return o;
+}
+function render(){
+  if(!src)return;
+  const{w,h}=src,n=w*h,c=S.con/100;
+  let g=new Float32Array(n);
+  for(let i=0;i<n;i++){let v=(src.g[i]-128)*c+128+S.lum*1.5;g[i]=v<0?0:v>255?255:v}
+  const b=boxBlur(g,w,h,S.blur);
+  let e=new Uint8Array(n);
+  const thr=8+(100-S.sens)*5;
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+    const i=y*w+x;
+    const gx=-b[i-w-1]-2*b[i-1]-b[i+w-1]+b[i-w+1]+2*b[i+1]+b[i+w+1];
+    const gy=-b[i-w-1]-2*b[i-w]-b[i-w+1]+b[i+w-1]+2*b[i+w]+b[i+w+1];
+    e[i]=(Math.abs(gx)+Math.abs(gy))>thr?1:0;
+  }
+  e=dilate(e,w,h,S.ep-1);
+  const ctx=out.getContext('2d'),id=ctx.createImageData(w,h),d=id.data,op=S.op/100;
+  for(let i=0,j=0;i<n;i++,j+=4){
+    let v,c=null;
+    if(mode=='lines'){v=255;if(e[i])c=COL[S.col]}
+    else if(mode=='gray')v=g[i];
+    else{v=255-(255-g[i])*op;if(e[i])c=COL[S.col]}
+    if(S.inv)v=255-v;
+    if(c){d[j]=c[0];d[j+1]=c[1];d[j+2]=c[2]}else d[j]=d[j+1]=d[j+2]=v;
+    d[j+3]=255;
+  }
+  ctx.putImageData(id,0,0);
+  if(S.grid>0){
+    ctx.strokeStyle=S.inv?'rgba(255,255,255,.55)':'rgba(194,65,12,.6)';
+    ctx.lineWidth=Math.max(1,w/600);
+    const N=S.grid,cs=Math.max(w,h)/N;
+    ctx.beginPath();
+    for(let x=cs;x<w;x+=cs){ctx.moveTo(x,0);ctx.lineTo(x,h)}
+    for(let y=cs;y<h;y+=cs){ctx.moveTo(0,y);ctx.lineTo(w,y)}
+    ctx.stroke();
+  }
+  syncOv();
+}
+document.getElementById('save').onclick=()=>{
+  if(!src){alert("Chargez d'abord une photo.");return}
+  out.toBlob(bl=>{const a=document.createElement('a');a.href=URL.createObjectURL(bl);a.download='modele-dessin.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)});
+};
+
+// ===== Mode caméra A/R =====
+const ar=document.getElementById('ar'),vid=document.getElementById('vid'),arpanel=document.getElementById('arpanel');
+let T={x:0,y:0,s:1,r:0},locked=false,stream=null,wl=null;
+const home=panel.nextElementSibling;
+function applyT(){document.getElementById('ov').style.transform=`translate(-50%,-50%) translate(${T.x}px,${T.y}px) rotate(${T.r}rad) scale(${T.s})`}
+function applyOv(){document.getElementById('ov').style.opacity=S.ov/100}
+function syncOv(){
+  if(ar.hidden||!src)return;
+  const o=document.getElementById('ov');
+  o.width=out.width;o.height=out.height;o.getContext('2d').drawImage(out,0,0);
+}
+async function openAR(){
+  if(!src){alert("Chargez d'abord l'image à recopier (photo ou galerie).");return}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920}},audio:false});
+  }catch(e){
+    alert("Caméra inaccessible. Autorisez l'accès à la caméra dans le navigateur (le fichier doit être ouvert dans Chrome ou Safari, ou hébergé en https).");return;
+  }
+  vid.srcObject=stream;try{await vid.play()}catch(e){}
+  try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+  arpanel.appendChild(panel);arpanel.hidden=true;
+  ar.hidden=false;T={x:0,y:0,s:1,r:0};locked=false;lockLab();applyT();applyOv();syncOv();
+}
+function closeAR(){
+  if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;vid.srcObject=null;
+  if(wl){try{wl.release()}catch(e){}wl=null}
+  home.parentNode.insertBefore(panel,home);ar.hidden=true;
+}
+function lockLab(){document.getElementById('arlock').textContent=locked?'🔒 Verrouillé':'🔓 Libre'}
+document.getElementById('arbtn').onclick=openAR;
+document.getElementById('arclose').onclick=closeAR;
+document.getElementById('arset').onclick=()=>{arpanel.hidden=!arpanel.hidden};
+document.getElementById('arcenter').onclick=()=>{T={x:0,y:0,s:1,r:0};applyT()};
+document.getElementById('arlock').onclick=()=>{locked=!locked;lockLab()};
+
+const P=new Map();
+ar.addEventListener('pointerdown',e=>{
+  if(e.target.closest('#arbar,#arpanel'))return;
+  ar.setPointerCapture(e.pointerId);P.set(e.pointerId,{x:e.clientX,y:e.clientY});
+});
+ar.addEventListener('pointermove',e=>{
+  const p=P.get(e.pointerId);if(!p)return;
+  if(!locked){
+    if(P.size==1){T.x+=e.clientX-p.x;T.y+=e.clientY-p.y}
+    else if(P.size==2){
+      const o=[...P.entries()].find(([id])=>id!=e.pointerId)[1];
+      const a0=Math.hypot(p.x-o.x,p.y-o.y),a1=Math.hypot(e.clientX-o.x,e.clientY-o.y);
+      const g0=Math.atan2(p.y-o.y,p.x-o.x),g1=Math.atan2(e.clientY-o.y,e.clientX-o.x);
+      if(a0>0)T.s=Math.min(6,Math.max(.2,T.s*a1/a0));
+      T.r+=g1-g0;T.x+=(e.clientX-p.x)/2;T.y+=(e.clientY-p.y)/2;
+    }
+    applyT();
+  }
+  p.x=e.clientX;p.y=e.clientY;
+});
+['pointerup','pointercancel'].forEach(t=>ar.addEventListener(t,e=>P.delete(e.pointerId)));
+</script>
+</body>
+</html>
